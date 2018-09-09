@@ -4,7 +4,7 @@
 
 
 $$
-n!=n*(n-1)*(n-2)*...*3*2*1
+n!=n\times(n-1)\times(n-2)\times\cdots\times3\times2\times1
 $$
 
 
@@ -14,7 +14,7 @@ $$
 
 
 $$
-P^r_n = n*(n-1)*...*(n-r+1)=\frac{n!}{(n-r)!}
+P^r_n = n\times(n-1)\times\cdots\times(n-r+1)=\frac{n!}{(n-r)!}
 $$
 
 
