@@ -296,91 +296,352 @@ console.log(stringObject[toStringSymbol]());
 
 ## The iterator interface
 
+给for / of循环的对象应该是可迭代的。 这意味着它具有一个以Symbol.iterator符号命名的方法（该语言定义的符号值，存储为Symbol函数的属性）。 调用该方法时，该方法应返回一个提供第二个接口Iterator的对象。 这是实际的迭代过程。 它具有next方法，该方法返回下一个结果。 该结果应该是一个对象，该对象的value属性提供下一个值（如果有），并具有done属性（当没有更多结果时应为true，否则为false）。
+请注意，next，value和done属性名称是纯字符串，而不是符号。 只有Symbol.iterator（可能会添加到许多不同的对象中）才是实际的符号。 我们可以自己直接使用此接口。
+
+```javascript
+let okIterator = "OK"[Symbol.iterator]();
+console.log(okIterator.next());
+// → {value: "O", done: false}
+console.log(okIterator.next());
+// → {value: "K", done: false}
+console.log(okIterator.next());
+// → {value: undefined, done: true}
+```
+
+让我们实现一个可迭代的数据结构。 我们将构建一个矩阵类，作为二维数组。
+
+```javascript
+class Matrix {
+  constructor(width, height, element = (x, y) => undefined) {
+    this.width = width;
+    this.height = height;
+    this.content = [];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        this.content[y * width + x] = element(x, y);
+      }
+    }
+  }
+  get(x, y) {
+    return this.content[y * this.width + x];
+  }
+  set(x, y, value) {
+    this.content[y * this.width + x] = value;
+  }
+}
+```
+
+该类将其内容存储在width×height元素的单个数组中。 元素逐行存储，因此，例如，第五行中的第三个元素（使用基于零的索引）存储在位置4×宽度+ 2。
+构造函数具有宽度，高度和可选的内容函数，这些函数将用于填充初始值。 有get和set方法可检索和更新矩阵中的元素。
+在矩阵上循环时，通常您会对元素的位置以及元素本身感兴趣，因此，我们将让迭代器生成具有x，y和value属性的对象。
+
+```javascript
+class MatrixIterator {
+  constructor(matrix) {
+    this.x = 0;
+    this.y = 0;
+    this.matrix = matrix;
+  }
+  next() {
+    if (this.y == this.matrix.height) return {done: true};
+    let value = {x: this.x,
+      y: this.y,
+      value: this.matrix.get(this.x, this.y)};
+    this.x++;
+    if (this.x == this.matrix.width) {
+      this.x = 0;
+      this.y++;
+    }
+    return {value, done: false};
+  }
+}
+```
+
+该类在其x和y属性中跟踪对矩阵进行迭代的进度。 下一个方法开始于检查是否已达到矩阵的底部。 如果没有，它将首先创建保存当前值的对象，然后更新其位置，并在必要时移至下一行。
+让我们将Matrix类设置为可迭代的。 在整本书中，我偶尔会使用事后原型操作将方法添加到类中，以使各个代码段保持较小且独立。 在不需要将代码分成小块的常规程序中，您可以直接在类中声明这些方法。
+
+```javascript
+Matrix.prototype[Symbol.iterator] = function() {
+  return new MatrixIterator(this);
+};
+```
+
+现在，我们可以循环使用for / of矩阵。
+
+```javascript
+let matrix = new Matrix(2, 2, (x, y) => `value ${x},${y}`);
+for (let {x, y, value} of matrix) {
+  console.log(x, y, value);
+}
+// → 0 0 value 0,0
+// → 1 0 value 1,0
+// → 0 1 value 0,1
+// → 1 1 value 1,1
+```
+
 ## Getters, setters, and statics
+
+接口通常主要由方法组成，但是也可以包括保存非函数值的属性。 例如，Map对象具有size属性，该属性告诉您其中存储了多少个键。 这样的对象甚至不必直接在实例中计算和存储这样的属性。 甚至直接访问的属性也可能隐藏方法调用。 此类方法称为getter，它们是通过在对象表达式或类声明中的方法名称之前编写get来定义的
+
+```javascript
+let varyingSize = {
+  get size() {
+    return Math.floor(Math.random() * 100);
+  }
+};
+console.log(varyingSize.size);
+// → 73
+console.log(varyingSize.size);
+// → 49
+```
+
+每当有人从该对象的size属性中读取内容时，就会调用关联的方法。 使用setter将属性写入属性时，您可以执行类似的操作。
+
+```javascript
+class Temperature {
+  constructor(celsius) {
+    this.celsius = celsius;
+  }
+  get fahrenheit() {
+    return this.celsius * 1.8 + 32;
+  }
+  set fahrenheit(value) {
+    this.celsius = (value - 32) / 1.8;
+  }
+  static fromFahrenheit(value) {
+    return new Temperature((value - 32) / 1.8);
+  }
+}
+let temp = new Temperature(22);
+console.log(temp.fahrenheit);
+// → 71.6
+temp.fahrenheit = 86;
+console.log(temp.celsius);
+// → 30
+```
+
+Temperature类允许您以摄氏度或华氏度读取和写入温度，但是在内部它仅存储摄氏温度，并在华氏吸气剂和设定器中自动与摄氏温度进行转换。
+有时您想将某些属性直接附加到构造函数，而不是原型。 此类方法将无权访问类实例，但可以用于提供创建实例的其他方式。
+在类声明中，名称之前写有静态的方法存储在构造函数中。 因此，温度类允许您编写Temperature.fromFahrenheit（100）以使用华氏度创建温度。
 
 ## Inheritance
 
+已知某些矩阵是对称的。 如果在对称矩阵的左上到右下对角线镜像，则它保持不变。 换句话说，存储在x，y处的值始终与y，x处的值相同。
+想象一下，我们需要一种像Matrix这样的数据结构，但是却需要一个事实，即矩阵是并且保持对称。 我们可以从头开始编写它，但这将涉及到重复一些与我们已经编写的代码非常相似的代码。
+JavaScript的原型系统可以创建一个新类，就像旧类一样，但是可以为其某些属性添加新的定义。 新类的原型源自旧的原型，但是为set方法添加了新的定义。
+用面向对象的编程术语，这称为继承。 新类继承了旧类的属性和行为。
+
+```javascript
+class SymmetricMatrix extends Matrix {
+  constructor(size, element = (x, y) => undefined) {
+    super(size, size, (x, y) => {
+      if (x < y) return element(y, x);
+      else return element(x, y);
+    });
+  }
+  set(x, y, value) {
+    super.set(x, y, value);
+    if (x != y) {
+      super.set(y, x, value);
+    }
+  }
+}
+let matrix = new SymmetricMatrix(5, (x, y) => `${x},${y}`);
+console.log(matrix.get(2, 3));
+// → 3,2
+```
+
+使用扩展一词表示该类不应直接基于默认的Object原型，而应基于其他某个类。这称为超类。派生类是子类。
+要初始化SymmetricMatrix实例，构造函数将通过super关键字调用其超类的构造函数。这是必需的，因为如果此新对象的行为（大致）类似于Matrix，则它将需要矩阵具有的实例属性。为确保矩阵对称，构造函数包装content方法以将坐标交换为对角线以下的值。
+set方法再次使用super，但是这次不是调用构造函数，而是从超类的方法集中调用特定的方法。我们正在重新定义集合，但确实要使用原始行为。由于this.set引用了新的set方法，因此调用将无效。在类方法内部，super提供了一种调用方法的方法，这些方法是在超类中定义的。
+继承使我们能够以相对较少的工作来构建与现有数据类型略有不同的数据类型。除封装和多态性外，它是面向对象传统的基本组成部分。但是，尽管后两者现在通常被认为是绝妙的主意，但是继承却更具争议性。
+封装和多态性可用于将代码段彼此分离，从而减少整个程序的混乱，而继承从根本上将类联系在一起，从而产生更多的纠结。从类继承时，与仅使用类相比，通常必须了解更多有关其工作方式的信息。继承可能是一个有用的工具，我在自己的程序中不时使用它，但它不应该是您所追求的第一个工具，并且您可能不应该积极地寻求构建类层次结构（家族树）的机会。
+
 ## The instanceof operator
+
+有时了解对象是否源自特定类很有用。 为此，JavaScript提供了一个名为instanceof的二进制运算符
+
+```javascript
+console.log(new SymmetricMatrix(2) instanceof SymmetricMatrix);
+// → true
+console.log(new SymmetricMatrix(2) instanceof Matrix);
+// → true
+console.log(new Matrix(2, 2) instanceof SymmetricMatrix);
+// → false
+console.log([1] instanceof Array);
+// → true
+```
+
+该运算符将查看继承的类型，因此SymmetricMatrix是Matrix的实例。 该运算符还可以应用于Array之类的标准构造函数。 几乎每个对象都是对象的一个实例
 
 ## Summary
 
-能够将函数值传递给其他函数是JavaScript的一个非常有用的方面。 它使我们能够编写函数来对计算进行建模，并在其中带有“空白”。 调用这些函数的代码可以通过提供函数值来填补空白。
-数组提供了许多有用的高阶方法。 您可以使用forEach遍历数组中的元素。 filter方法返回一个新数组，该数组仅包含通过谓词函数的元素。
-通过将每个元素放入函数中来转换数组是通过map进行的。 您可以使用reduce将数组中的所有元素组合为一个值。 some方法测试是否有任何元素匹配给定的谓词函数。 findIndex查找与谓词匹配的第一个元素的位置。
+因此，对象所做的不仅仅是保留自己的属性。他们有原型，这是其他对象。只要它们的原型具有该属性，它们就好像它们具有的属性一样。简单对象有对象。
+原型作为他们的原型。
+构造函数是其名称通常以大写字母开头的函数，可以与new运算符一起使用以创建新对象。新对象的原型将是在构造函数的prototype属性中找到的对象。您可以通过将给定类型的所有值共享的属性放入其原型中来充分利用这一点。有一个类标记，提供了一种清晰的方法来定义构造函数及其原型。
+您可以定义getter和setter以在每次访问对象的属性时秘密调用方法。静态方法是存储在类的构造函数中的方法，而不是其原型。
+给定一个对象和一个构造函数，instanceof运算符可以告诉您该对象是否是该构造函数的实例。
+与对象有关的一件有用的事情是为它们指定一个接口，并告诉每个人仅应通过该接口与您的对象对话。构成对象的其余细节现在已封装，隐藏在接口后面。
+一个以上的类型可以实现相同的接口。使用接口编写的代码会自动知道如何使用提供接口的许多不同对象。这称为多态。
+当实现仅在某些细节上有所不同的多个类时，将新类编写为现有类的子类可能会有所帮助，从而继承其部分行为。
 
 ## Exercises
 
-### Flattening
+### A vector type
 
-将reduce方法与concat方法结合使用，可以将数组数组“拉平”为具有原始数组所有元素的单个数组。
-
-```javascript
-let arrays = [[1, 2, 3], [4, 5], [6]];
-
-console.log(arrays.reduce((flat, current) => flat.concat(current), []));
-// → [1, 2, 3, 4, 5, 6]
-```
-
-### Your own loop
-
-编写一个高阶函数循环，该循环提供类似for循环的语句。 它需要一个值，一个测试函数，一个更新函数和一个主体函数。 每次迭代时，它首先在当前循环值上运行测试函数，并在返回false时停止。 然后，它调用body函数，并为其提供当前值。 最后，它调用update函数创建一个新值，并从头开始。 定义函数时，可以使用常规循环进行实际循环。
+编写代表二维空间中向量的Vec类。 它带有x和y参数（数字），应将其保存到相同名称的属性中。
+给Vec原型两个方法plus和minus，它们将另一个向量作为参数，并返回一个新向量，该向量具有两个向量（此和参数）的x和y值之和或差。
+在原型中添加一个getter属性长度，该长度可以计算向量的长度-即，点（x，y）与原点（0，0）的距离。
 
 ```javascript
-function loop(start, test, update, body) {
-  for (let value = start; test(value); value = update(value)) {
-    body(value);
+class Vec {
+  constructor(x, y) {
+    this.x = x;
+    this.y = y;
+  }
+
+  plus(other) {
+    return new Vec(this.x + other.x, this.y + other.y);
+  }
+
+  minus(other) {
+    return new Vec(this.x - other.x, this.y - other.y);
+  }
+
+  get length() {
+    return Math.sqrt(this.x * this.x + this.y * this.y);
   }
 }
 
-loop(3, n => n > 0, n => n - 1, console.log);
-// → 3
-// → 2
-// → 1
+console.log(new Vec(1, 2).plus(new Vec(2, 3)));
+// → Vec{x: 3, y: 5}
+console.log(new Vec(1, 2).minus(new Vec(2, 3)));
+// → Vec{x: -1, y: -1}
+console.log(new Vec(3, 4).length);
+// → 5
 ```
 
-### Everything
+### Group
 
-类似于某些方法，数组也具有每种方法。 当给定的函数对数组中的每个元素返回true时，此返回true。 从某种意义上说，有些是||的版本。 操作数组的运算符，每个运算符都类似于&&运算符。 将每个函数都实现为以数组和谓词函数为参数的函数。 编写两个版本，一个使用循环，一个使用some方法。
+标准JavaScript环境提供了另一个名为Set的数据结构。 就像Map的实例一样，集合包含值的集合。 与Map不同，它不会将其他值与这些值相关联，而只是跟踪哪些值是集合的一部分。 一个值只能是一个集合的一部分，再次添加不会产生任何效果。
+编写一个名为Group的类（因为已经使用Set）。 与Set一样，它具有add，delete和has方法。 它的构造函数创建一个空组，add向该组添加一个值（但前提是它还不是成员），delete从该组中删除其参数（如果它是一个成员），has返回一个布尔值，指示它的参数是否为该组的成员。
+使用===运算符或诸如indexOf之类的等效项来确定两个值是否相同。
+给该类一个静态from方法，该方法使用一个可迭代的对象作为参数，并创建一个包含通过迭代产生的所有值的组。
 
 ```javascript
-function every(array, predicate) {
-  for (let element of array) {
-    if (!predicate(element)) return false;
+class Group {
+  constructor() {
+    this.members = [];
   }
-  return true;
+
+  add(value) {
+    if (!this.has(value)) {
+      this.members.push(value);
+    }
+  }
+
+  delete(value) {
+    this.members = this.members.filter(v => v !== value);
+  }
+
+  has(value) {
+    return this.members.includes(value);
+  }
+
+  static from(collection) {
+    let group = new Group;
+    for (let value of collection) {
+      group.add(value);
+    }
+    return group;
+  }
 }
 
-function every2(array, predicate) {
-  return !array.some(element => !predicate(element));
-}
-
-console.log(every([1, 3, 5], n => n < 10));
+let group = Group.from([10, 20]);
+console.log(group.has(10));
 // → true
-console.log(every([2, 4, 16], n => n < 10));
+console.log(group.has(30));
 // → false
-console.log(every([], n => n < 10));
-// → true
+group.add(10);
+group.delete(10);
+console.log(group.has(10));
 ```
 
-### Dominant writing direction
+### Iterable groups
 
-编写一个函数来计算文本字符串中的主要书写方向。 请记住，每个脚本对象都有一个Direction属性，可以是“ ltr”（从左到右），“ rtl”（从右到左）或“ ttb”（从上到下）。 主导方向是具有与之相关联的脚本的大多数字符的方向。 本章前面定义的characterScript和countBy函数在这里可能很有用。
+使上一个练习中的Group类可迭代。 如果您不清楚接口的确切形式，请参阅本章前面有关迭代器接口的部分。
+如果您使用数组表示组的成员，则不要仅返回通过调用数组上的Symbol.iterator方法创建的迭代器。 那会行得通，但它违背了此练习的目的。
+如果在迭代过程中修改组时迭代器的行为异常，则可以。
 
 ```javascript
-function dominantDirection(text) {
-  let counted = countBy(text, char => {
-    let script = characterScript(char.codePointAt(0));
-    return script ? script.direction : "none";
-  }).filter(({name}) => name != "none");
+class Group {
+  constructor() {
+    this.members = [];
+  }
 
-  if (counted.length == 0) return "ltr";
+  add(value) {
+    if (!this.has(value)) {
+      this.members.push(value);
+    }
+  }
 
-  return counted.reduce((a, b) => a.count > b.count ? a : b).name;
+  delete(value) {
+    this.members = this.members.filter(v => v !== value);
+  }
+
+  has(value) {
+    return this.members.includes(value);
+  }
+
+  static from(collection) {
+    let group = new Group;
+    for (let value of collection) {
+      group.add(value);
+    }
+    return group;
+  }
+
+  [Symbol.iterator]() {
+    return new GroupIterator(this);
+  }
 }
 
-console.log(dominantDirection("Hello!"));
-// → ltr
-console.log(dominantDirection("Hey, مساء الخير"));
-// → rtl
+class GroupIterator {
+  constructor(group) {
+    this.group = group;
+    this.position = 0;
+  }
+
+  next() {
+    if (this.position >= this.group.members.length) {
+      return {done: true};
+    } else {
+      let result = {value: this.group.members[this.position],
+                    done: false};
+      this.position++;
+      return result;
+    }
+  }
+}
+
+for (let value of Group.from(["a", "b", "c"])) {
+  console.log(value);
+}
+// → a
+// → b
+// → c
+```
+
+### Borrowing a method
+
+在本章的前面，我曾提到，当您想忽略原型的属性时，可以将对象的hasOwnProperty用作in运算符的更可靠替代。 但是，如果您的地图需要包含单词“ hasOwnProperty”怎么办？ 您将无法再调用该方法，因为对象自身的属性会隐藏该方法的值。
+您能想到一种通过该名称具有自己的属性的对象调用hasOwnProperty的方法吗？
+
+```javascript
+let map = {one: true, two: true, hasOwnProperty: true};
+
+console.log(Object.prototype.hasOwnProperty.call(map, "one"));
+// → true
 ```
 
